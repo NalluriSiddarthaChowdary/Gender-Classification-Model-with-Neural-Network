@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gender Guardian</title>
+  <link href="style.css" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Gender Guardian</h1>
+      <p class="subtitle">Gender Classification Model with Neural-Network</p>
+    </header>
+
+    <main>
+      <!-- Live Detection Card -->
+      <div class="card">
+        <div class="card-header" onclick="toggleCard(this)">
+          <h2><i data-lucide="camera"></i> CNN-Powered Live Detection</h2>
+          <i class="chevron" data-lucide="chevron-down"></i>
+        </div>
+        <div class="card-content">
+          <div class="video-container">
+            <i data-lucide="camera"></i>
+            <p>Click "Start Detection" to activate CNN-based gender detection</p>
+            <button id="startDetection">Start Detection</button>
+            <video id="webcam" autoplay playsinline width="640" height="480" style="display: none;"></video>
+            <canvas id="canvas" style="display: none;"></canvas>
+            <p id="result" class="upload-hint"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Image Upload Card -->
+      <div class="card">
+        <div class="card-header" onclick="toggleCard(this)">
+          <h2><i data-lucide="upload"></i> Image Upload</h2>
+          <i class="chevron" data-lucide="chevron-down"></i>
+        </div>
+        <div class="card-content">
+          <div class="upload-container">
+            <i data-lucide="upload"></i>
+            <p><strong>Click to upload</strong> or drag and drop</p>
+            <p class="upload-hint">PNG, JPG up to 10MB</p>
+            <input type="file" id="uploadImage" name="frame" accept=".png, .jpg, .jpeg" />
+            <img id="previewImage" src="" alt="Preview" style="margin-top: 1rem; max-width: 100%; display: none; border-radius: 8px;"/>
+            <p id="uploadResult" class="upload-hint"></p>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      <p>Gender Guardian - CNN-Powered Gender Classification System</p>
+    </footer>
+  </div>
+
+<script>
+  lucide.createIcons();
+
+  const startBtn = document.getElementById('startDetection');
+  const video = document.getElementById('webcam');
+  const canvas = document.getElementById('canvas');
+  const resultText = document.getElementById('result');
+  const uploadImage = document.getElementById('uploadImage');
+  const uploadResult = document.getElementById('uploadResult');
+  const previewImage = document.getElementById('previewImage');
+
+  let streaming = false;
+  let interval;
+
+  // Start or stop webcam detection
+  startBtn.onclick = async () => {
+    if (!streaming) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        video.style.display = 'block';
+        resultText.textContent = "Detecting...";
+        streaming = true;
+        startBtn.textContent = "Stop Detection";
+
+        interval = setInterval(() => {
+          captureFrameAndSend();
+        }, 1000);
+      } catch (err) {
+        resultText.textContent = "Error accessing webcam: " + err;
+      }
+    } else {
+      video.srcObject.getTracks().forEach(track => track.stop());
+      clearInterval(interval);
+      video.style.display = 'none';
+      resultText.textContent = "Detection stopped.";
+      streaming = false;
+      startBtn.textContent = "Start Detection";
+    }
+  };
+
+  // Capture frame from webcam and send to server
+  function captureFrameAndSend() {
+    const context = canvas.getContext('2d');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(async (blob) => {
+      const formData = new FormData();
+      formData.append("frame", blob, "frame.jpg");
+
+      try {
+        const response = await fetch("http://localhost:5000/detect", {
+          method: "POST",
+          body: formData
+        });
+        const data = await response.json();
+        resultText.textContent = `${data.gender} (${data.confidence}%)`;
+        // 🚫 No speakGender() here for live webcam
+      } catch (error) {
+        resultText.textContent = "Prediction error: " + error;
+      }
+    }, "image/jpeg");
+  }
+
+  // Handle image upload and send to backend for prediction
+  uploadImage.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) {
+      uploadResult.textContent = "No file selected.";
+      return;
+    }
+
+    // Show preview
+    const reader = new FileReader();
+    reader.onload = function (event) {
+      previewImage.src = event.target.result;
+      previewImage.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+
+    uploadResult.textContent = "Uploading and predicting...";
+    await sendImageForPrediction(file);
+  });
+
+  async function sendImageForPrediction(file) {
+    const formData = new FormData();
+    formData.append("image", file);
+
+    try {
+      const response = await fetch("http://localhost:5000/detect-image", {
+        method: "POST",
+        body: formData
+      });
+
+      const data = await response.json();
+      uploadResult.textContent = `${data.gender} (${data.confidence}%)`;
+      speakGender(data.gender); // ✅ Voice only for image upload
+    } catch (error) {
+      uploadResult.textContent = "Prediction error: " + error;
+    }
+  }
+
+  // Speak gender using Web Speech API
+  function speakGender(gender) {
+    const synth = window.speechSynthesis;
+    const utter = new SpeechSynthesisUtterance();
+    utter.text = gender;
+
+    // Use better voice settings
+    const voices = synth.getVoices();
+    const preferredVoice = voices.find(voice => voice.lang.includes('en') && voice.name.toLowerCase().includes('female'))
+                          || voices.find(voice => voice.lang.includes('en'));
+
+    if (preferredVoice) {
+      utter.voice = preferredVoice;
+    }
+    utter.rate = 0.9;
+    utter.pitch = 1.1;
+    synth.speak(utter);
+  }
+
+  // Toggle card content (arrow animation)
+  function toggleCard(header) {
+    const cardContent = header.nextElementSibling;
+    cardContent.style.display = cardContent.style.display === 'none' ? 'block' : 'none';
+    const chevronIcon = header.querySelector('.chevron');
+    chevronIcon.setAttribute('data-lucide', cardContent.style.display === 'none' ? 'chevron-down' : 'chevron-up');
+    lucide.createIcons();
+  }
+</script>
+
+</body>
+</html>
